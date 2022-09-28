@@ -1,0 +1,138 @@
+#include "tcpserver.h"
+
+namespace UW
+{
+
+TcpServer::TcpServer(const char *ip, uint16_t port):  _ip(ip), _port(port)
+{
+
+    cout << "tcp init" << endl;
+    uv_tcp_init(_loop, _server);
+    uv_ip4_addr(ip, port, &_addr);
+//    uv_close(reinterpret_cast<uv_handle_t*>(&_server), nullptr);
+//    uv_run(uv_default_loop(), UV_RUN_DEFAULT);
+//    displayError(uv_loop_close(uv_default_loop()));
+}
+
+TcpServer::~TcpServer()
+{
+    uv_close(reinterpret_cast<uv_handle_t*>(_server), _onTcpServerClose);
+}
+
+int TcpServer::start()
+{
+    int ret = uv_tcp_bind(_server, reinterpret_cast<const sockaddr *>(&_addr), 0);
+    if(ret != 0)
+    {
+        cout << "ret bind" << endl;
+        return ret;
+    }
+
+    _server->data = static_cast<void *>(this);
+
+    ret = uv_listen(reinterpret_cast<uv_stream_t *>(_server), _DefaultBackLog, _onNewConnection);
+    if(ret != 0)
+    {
+        cout << "ret listen" << endl;
+        return ret;
+    }
+
+    return 0;
+}
+
+void TcpServer::displayError(int err)
+{
+    cout << uv_strerror(err) << endl;
+    cout << uv_err_name(err) << endl;
+}
+
+void TcpServer::freeWriteReq(uv_write_t *req)
+{
+    write_req_t *wr = (write_req_t*) req;
+
+    free(wr->buf.base);
+    free(wr);
+}
+
+void TcpServer::allocBuffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)
+{
+    cout << suggested_size << endl;
+    buf->base = (char*) malloc(suggested_size);
+    buf->len = suggested_size;
+    std::cout << (void *)buf << endl;
+}
+
+void TcpServer::onClose(uv_handle_t *handle)
+{
+    delete handle;
+}
+
+void TcpServer::echoWrite(uv_write_t *req, int status)
+{
+    if (status) {
+        fprintf(stderr, "Write error %s\n", uv_strerror(status));
+    }
+    freeWriteReq(req);
+
+}
+
+void TcpServer::echoRead(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf)
+{
+    if (nread > 0)
+    {
+        std::cout << (void *)buf << endl;
+        write_req_t *req = (write_req_t*) malloc(sizeof(write_req_t));
+        req->buf = uv_buf_init(buf->base, nread);
+        uv_write((uv_write_t *) req, client, &req->buf, 1, echoWrite);
+        return;
+    }
+
+    if (nread < 0)
+    {
+        if (nread != UV_EOF)
+        {
+            displayError(nread);
+        }
+        else
+        {
+            cout << "disconnect" << endl;
+        }
+
+        uv_close((uv_handle_t*) client, onClose);
+    }
+
+    free(buf->base);
+}
+
+void TcpServer::_onNewConnection(uv_stream_t *server, int status)
+{
+
+    cout << "new connection " << endl;
+    uv_stop(uv_default_loop());
+    if (status < 0)
+    {
+        fprintf(stderr, "New connection error %s\n", uv_strerror(status));
+        // error!
+        return;
+    }
+
+    uv_tcp_t *client = new uv_tcp_t;
+    uv_tcp_init(uv_default_loop(), client);
+
+    if (uv_accept(server, reinterpret_cast<uv_stream_t*>(client)) == 0)
+    {
+        uv_read_start(reinterpret_cast<uv_stream_t *>(client), allocBuffer, echoRead);
+    }
+    else
+    {
+        uv_close(reinterpret_cast<uv_handle_t *>(client), _onTcpServerClose);
+    }
+}
+
+void TcpServer::_onTcpServerClose(uv_handle_t *handle)
+{
+    delete handle;
+}
+
+}
+
